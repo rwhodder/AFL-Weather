@@ -5,7 +5,7 @@ from collections import defaultdict
 from math import radians, cos, sin, asin, sqrt
 from stadium_locations import STADIUM_COORDS
 
-# Home venues for travel reference
+# Team home venues (used for fallback if needed)
 TEAM_HOME_VENUE = {
     "Adelaide Crows": "Adelaide Oval",
     "Port Adelaide": "Adelaide Oval",
@@ -14,7 +14,7 @@ TEAM_HOME_VENUE = {
     "Brisbane Lions": "Gabba",
     "Gold Coast SUNS": "Heritage Bank Stadium",
     "Sydney Swans": "SCG",
-    "GWS Giants": "Giants Stadium",
+    "GWS GIANTS": "ENGIE Stadium",
     "North Melbourne": "Marvel Stadium",
     "Essendon": "Marvel Stadium",
     "Carlton": "Marvel Stadium",
@@ -25,6 +25,55 @@ TEAM_HOME_VENUE = {
     "St Kilda": "Marvel Stadium",
     "Western Bulldogs": "Marvel Stadium",
     "Geelong Cats": "GMHBA Stadium"
+}
+
+# Team home regions
+TEAM_HOME_REGION = {
+    "Adelaide Crows": "SA",
+    "Port Adelaide": "SA",
+    "West Coast Eagles": "WA",
+    "Fremantle": "WA",
+    "Brisbane Lions": "QLD",
+    "Gold Coast SUNS": "QLD",
+    "Sydney Swans": "NSW",
+    "GWS GIANTS": "NSW",
+    "North Melbourne": "VIC",
+    "Essendon": "VIC",
+    "Carlton": "VIC",
+    "Collingwood": "VIC",
+    "Hawthorn": "VIC",
+    "Melbourne": "VIC",
+    "Richmond": "VIC",
+    "St Kilda": "VIC",
+    "Western Bulldogs": "VIC",
+    "Geelong Cats": "VIC"
+}
+
+# Venue → region
+VENUE_REGION_MAP = {
+    "MCG": "VIC",
+    "Marvel Stadium": "VIC",
+    "GMHBA Stadium": "VIC",
+    "Mars Stadium": "VIC",
+    "SCG": "NSW",
+    #"Giants Stadium": "NSW",
+    "ENGIE Stadium": "NSW",
+    "Manuka Oval": "ACT",
+    "Gabba": "QLD",
+    "Heritage Bank Stadium": "QLD",
+    "People First Stadium": "QLD",
+    "Adelaide Oval": "SA",
+    "Norwood Oval": "SA",
+    "Barossa Park": "SA",
+    "Optus Stadium": "WA",
+    "Hands Oval Stadium": "WA",
+    "Blundstone Arena": "TAS",
+    "University of Tasmania Stadium": "TAS",
+    "UTAS Stadium": "TAS",
+    "Blundstone Arena":"TAS",
+    "TIO Stadium":"NT",
+    "TIO Traeger Park":"NT" 
+
 }
 
 def fetch_full_fixture():
@@ -49,25 +98,17 @@ def timezone_offset(lat):
     elif lat < -33: return 10.5 if lat > -35 else 8
     else: return 10
 
-def is_real_travel(venue1, venue2):
-    if not venue1 or not venue2:
-        return False
-    city_groups = [
-        {"MCG", "Marvel Stadium", "GMHBA Stadium", "Mars Stadium"},
-        {"SCG", "Giants Stadium"},
-        {"Gabba", "Heritage Bank Stadium"},
-        {"Blundstone Arena", "University of Tasmania Stadium"},
-    ]
-    for group in city_groups:
-        if venue1 in group and venue2 in group:
-            return False
-    return True
-
 def is_home_game(team, venue):
-    home_venue = TEAM_HOME_VENUE.get(team)
-    if not home_venue:
+    home_region = TEAM_HOME_REGION.get(team)
+    venue_region = VENUE_REGION_MAP.get(venue)
+    if not home_region or not venue_region:
         return False
-    return not is_real_travel(home_venue, venue)
+    return home_region == venue_region
+
+def same_state(venue1, venue2):
+    region1 = VENUE_REGION_MAP.get(venue1)
+    region2 = VENUE_REGION_MAP.get(venue2)
+    return region1 is not None and region1 == region2
 
 def build_travel_log():
     fixture = fetch_full_fixture()
@@ -100,6 +141,7 @@ def build_travel_log():
         last_venue = None
         last_time = None
         last_week_real_travel = False
+        last_was_home_game = True
 
         for match in matches:
             venue = match['venue']
@@ -120,12 +162,17 @@ def build_travel_log():
                 last_venue = venue
                 last_time = dt
                 last_week_real_travel = False
+                last_was_home_game = False
                 continue
 
             distance = 0
             short_rest = False
             timezone_change = False
+
             this_week_real_travel = not is_home_game(team, venue)
+
+            if this_week_real_travel and last_venue and same_state(venue, last_venue):
+                this_week_real_travel = False  # override if still same state
 
             if last_venue and STADIUM_COORDS.get(last_venue):
                 prev_coords = STADIUM_COORDS.get(last_venue)
@@ -139,7 +186,12 @@ def build_travel_log():
                     days_rest = (dt - last_time).days
                     short_rest = days_rest < 6
 
-            back_to_back_travel = last_week_real_travel and this_week_real_travel
+            # ✅ Only back-to-back if last week and this week were travel, with no home in between
+            back_to_back_travel = (
+                last_week_real_travel and
+                this_week_real_travel and
+                not last_was_home_game
+            )
 
             fatigue_score = 0
             notes = []
@@ -167,9 +219,11 @@ def build_travel_log():
                 'notes': "; ".join(notes)
             })
 
+            # update state
             last_venue = venue
             last_time = dt
             last_week_real_travel = this_week_real_travel
+            last_was_home_game = is_home_game(team, venue)
 
             travel_log.append(match)
 

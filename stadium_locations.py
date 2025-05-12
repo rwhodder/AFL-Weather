@@ -13,11 +13,11 @@ STADIUM_COORDS = {
 
 #WA
 "Optus Stadium": (-31.9505, 115.8890),
-
+"Hands Oval Stadium": (-33.2046, 115.3834),
 #SYD
 "SCG": (-33.8914, 151.2245),
 "ENGIE Stadium": (-33.8430, 151.0677),
-"Giants Stadium": (-33.8474, 151.0632),
+#"Giants Stadium": (-33.8474, 151.0632), same as ENGIE
 
 #ACT
 "Manuka Oval": (-35.1950, 149.0850),
