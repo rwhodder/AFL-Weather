@@ -5,14 +5,34 @@ from collections import defaultdict
 from math import radians, cos, sin, asin, sqrt
 from stadium_locations import STADIUM_COORDS
 
-# Load all fixture data from the AFL feed
+# Home venues for travel reference
+TEAM_HOME_VENUE = {
+    "Adelaide Crows": "Adelaide Oval",
+    "Port Adelaide": "Adelaide Oval",
+    "West Coast Eagles": "Optus Stadium",
+    "Fremantle": "Optus Stadium",
+    "Brisbane Lions": "Gabba",
+    "Gold Coast SUNS": "Heritage Bank Stadium",
+    "Sydney Swans": "SCG",
+    "GWS Giants": "Giants Stadium",
+    "North Melbourne": "Marvel Stadium",
+    "Essendon": "Marvel Stadium",
+    "Carlton": "Marvel Stadium",
+    "Collingwood": "MCG",
+    "Hawthorn": "MCG",
+    "Melbourne": "MCG",
+    "Richmond": "MCG",
+    "St Kilda": "Marvel Stadium",
+    "Western Bulldogs": "Marvel Stadium",
+    "Geelong Cats": "GMHBA Stadium"
+}
+
 def fetch_full_fixture():
     url = "https://fixturedownload.com/feed/json/afl-2025"
     response = requests.get(url)
     response.raise_for_status()
     return response.json()
 
-# Calculate haversine distance between two (lat, lon) points
 def haversine(coord1, coord2):
     lon1, lat1 = coord1[1], coord1[0]
     lon2, lat2 = coord2[1], coord2[0]
@@ -24,28 +44,31 @@ def haversine(coord1, coord2):
     km = 6371 * c
     return km
 
-# Return rough UTC offset estimate
 def timezone_offset(lat):
-    if lat < -40: return 10  # TAS
-    elif lat < -33: return 10.5 if lat > -35 else 8  # SA or WA
-    else: return 10  # VIC, QLD, NSW
+    if lat < -40: return 10
+    elif lat < -33: return 10.5 if lat > -35 else 8
+    else: return 10
 
-# Determine whether travel is significant
 def is_real_travel(venue1, venue2):
     if not venue1 or not venue2:
         return False
     city_groups = [
-        {"MCG", "Marvel Stadium", "GMHBA Stadium", "Mars Stadium"},  # VIC
-        {"SCG", "Giants Stadium"},  # Sydney
-        {"Gabba", "Heritage Bank Stadium"},  # QLD
-        {"Blundstone Arena", "University of Tasmania Stadium"},  # TAS
+        {"MCG", "Marvel Stadium", "GMHBA Stadium", "Mars Stadium"},
+        {"SCG", "Giants Stadium"},
+        {"Gabba", "Heritage Bank Stadium"},
+        {"Blundstone Arena", "University of Tasmania Stadium"},
     ]
     for group in city_groups:
         if venue1 in group and venue2 in group:
             return False
     return True
 
-# Build per-team travel log and fatigue scores
+def is_home_game(team, venue):
+    home_venue = TEAM_HOME_VENUE.get(team)
+    if not home_venue:
+        return False
+    return not is_real_travel(home_venue, venue)
+
 def build_travel_log():
     fixture = fetch_full_fixture()
     melb_tz = pytz.timezone('Australia/Melbourne')
@@ -84,20 +107,29 @@ def build_travel_log():
             latlon = STADIUM_COORDS.get(venue)
 
             if not latlon:
-                match['fatigue_score'] = None
-                match['notes'] = f"Unknown venue: {venue}"
-                travel_log.append({**match, 'team': team})
+                match.update({
+                    'team': team,
+                    'distance_km': None,
+                    'short_rest': None,
+                    'back_to_back_travel': None,
+                    'timezone_change': None,
+                    'fatigue_score': None,
+                    'notes': f"Manual Check Required: Unknown venue '{venue}'"
+                })
+                travel_log.append(match)
+                last_venue = venue
+                last_time = dt
+                last_week_real_travel = False
                 continue
 
             distance = 0
             short_rest = False
             timezone_change = False
-            this_week_real_travel = False
+            this_week_real_travel = not is_home_game(team, venue)
 
-            if last_venue:
+            if last_venue and STADIUM_COORDS.get(last_venue):
                 prev_coords = STADIUM_COORDS.get(last_venue)
-                if prev_coords and is_real_travel(last_venue, venue):
-                    this_week_real_travel = True
+                if this_week_real_travel:
                     distance = haversine(prev_coords, latlon)
                     timezone_change = abs(
                         timezone_offset(prev_coords[0]) - timezone_offset(latlon[0])
@@ -107,10 +139,8 @@ def build_travel_log():
                     days_rest = (dt - last_time).days
                     short_rest = days_rest < 6
 
-            # Final back-to-back logic
             back_to_back_travel = last_week_real_travel and this_week_real_travel
 
-            # Fatigue score logic
             fatigue_score = 0
             notes = []
 
@@ -137,7 +167,6 @@ def build_travel_log():
                 'notes': "; ".join(notes)
             })
 
-            # Update for next loop
             last_venue = venue
             last_time = dt
             last_week_real_travel = this_week_real_travel
@@ -146,11 +175,12 @@ def build_travel_log():
 
     return travel_log
 
-# Preview in console
+# CLI Preview
 if __name__ == "__main__":
     log = build_travel_log()
     print(f"\n{'Team':<15} {'Round':<5} {'Opponent':<15} {'Venue':<25} {'Fatigue':<7} {'Notes'}")
-    print("-" * 90)
+    print("-" * 95)
     for entry in log:
-        if entry.get('fatigue_score') is not None:
-            print(f"{entry['team']:<15} {entry['round']:<5} {entry['opponent']:<15} {entry['venue']:<25} {entry['fatigue_score']:<7} {entry['notes']}")
+        fat_score = entry['fatigue_score']
+        fat_display = f"{fat_score}" if fat_score is not None else "N/A"
+        print(f"{entry['team']:<15} {entry['round']:<5} {entry['opponent']:<15} {entry['venue']:<25} {fat_display:<7} {entry['notes']}")
